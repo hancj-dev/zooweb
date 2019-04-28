@@ -14,10 +14,10 @@ public interface ZkManager {
 	Map<String, String> getNodeMeta(String nodePath);
 
 	List<Map<String, String>> getACLs(String nodePath);
-	
+
 	boolean createNode(String path, String nodeName, String data);
 
-	boolean deleteNode(String nodePath);
+	boolean deleteNodes(List<String> nodePath);
 
 	boolean setData(String nodePath, String data);
 

@@ -1,6 +1,8 @@
 package com.zhy.zooweb.web;
 
+import com.zhy.zooweb.UniqueId;
 import com.zhy.zooweb.dao.zookeeper.ZkCache;
+import com.zhy.zooweb.dao.zookeeper.ZkManager;
 import com.zhy.zooweb.model.Tree;
 import com.zhy.zooweb.model.TreeRoot;
 import org.slf4j.Logger;
@@ -12,15 +14,12 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Controller
 @RequestMapping("/zk")
 public class ZkController {
-    private static final Logger logger = LoggerFactory.getLogger(ZkController.class);
-
+    private static final Logger log = LoggerFactory.getLogger(ZkController.class);
     @RequestMapping(value = "/queryZnodeInfo")
     @ResponseBody
     public Map<String, Object> queryzNodeInfo(@RequestParam(required = false) String path,
@@ -28,7 +27,7 @@ public class ZkController {
         Map<String, Object> model = new HashMap<String, Object>();
         try {
             path = URLDecoder.decode(path, "utf-8");
-            logger.info("queryzNodeInfo : " + path);
+            log.info("queryzNodeInfo : " + path);
             if (path != null) {
                 model.put("data", ZkCache.get(cacheId).getData(path));
                 model.put("arr", ZkCache.get(cacheId).getNodeMeta(path));
@@ -37,7 +36,7 @@ public class ZkController {
                 model.put("cacheId", cacheId);
             }
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
         }
         return model;
     }
@@ -47,37 +46,40 @@ public class ZkController {
     @ResponseBody
     public List<Tree> query(@RequestParam(required = false) String id, @RequestParam(required = false) String path,
                             @RequestParam() String cacheId) {
-        logger.info("id : {} | path : {} ", id, path);
-        logger.info("path : {}", path);
-        logger.info("cacheId : {}", cacheId);
+        log.info("id : {} | path : {} | cacheId : {}", id,path,cacheId);
         TreeRoot root = new TreeRoot();
         if (path != null) {
+            root.remove(0);
             if ("/".equals(path)) {
-                root.remove(0);
-                List<String> pathList = ZkCache.get(cacheId).getChildren(null);
-                logger.info("list {}", pathList);
+                List<String> pathList = ZkCache.get(cacheId).getChildren(path);
                 for (String p : pathList) {
                     Map<String, Object> atr = new HashMap<String, Object>();
-                    atr.put("path", "/" + p);
-                    Tree tree = new Tree(0, p, Tree.STATE_CLOSED, null, atr);
+                    String cPath = "/" + p;
+                    atr.put("path", cPath);
+                    String state = ZkCache.get(cacheId).getNodeMeta(cPath).get(ZkManager.Meta.numChildren.toString()).equals("0") ?
+                            Tree.STATE_OPEN : Tree.STATE_CLOSED;
+                    Tree tree = new Tree(UniqueId.forPath(cPath), p, state, null, atr);
                     root.add(tree);
                 }
             } else {
-                root.remove(0);
                 try {
                     path = URLDecoder.decode(path, "utf-8");
                 } catch (UnsupportedEncodingException e) {
-                    logger.error("", e);
+                    e.printStackTrace();
                 }
                 List<String> pathList = ZkCache.get(cacheId).getChildren(path);
                 for (String p : pathList) {
                     Map<String, Object> atr = new HashMap<String, Object>();
-                    atr.put("path", path + "/" + p);
-                    Tree tree = new Tree(0, p, Tree.STATE_CLOSED, null, atr);
+                    String cPath = path + "/" + p;
+                    atr.put("path", cPath);
+                    String state = ZkCache.get(cacheId).getNodeMeta(cPath).get(ZkManager.Meta.numChildren.toString()).equals("0") ?
+                            Tree.STATE_OPEN : Tree.STATE_CLOSED;
+                    Tree tree = new Tree(UniqueId.forPath(cPath), p, state, null, atr);
                     root.add(tree);
                 }
             }
         }
+        root.sort(Comparator.comparing(tree -> tree.getText().toLowerCase()));
         return root;
     }
 
@@ -85,10 +87,11 @@ public class ZkController {
     @ResponseBody
     public String saveData(@RequestParam() String path, @RequestParam() String data, @RequestParam() String cacheId) {
         try {
-            logger.info("data:{}", data);
+            log.info("data:{}", data);
             return ZkCache.get(cacheId).setData(path, data) ? "保存成功" : "保存失败";
         } catch (Exception e) {
-            logger.info("Error : {}", e.getMessage(), e);
+            log.info("Error : {}", e.getMessage());
+            e.printStackTrace();
             return "保存失败! Error : " + e.getMessage();
         }
 
@@ -99,11 +102,12 @@ public class ZkController {
     public String createNode(@RequestParam() String path, @RequestParam() String nodeName,
                              @RequestParam() String cacheId) {
         try {
-            logger.info("path:{}", path);
-            logger.info("nodeName:{}", nodeName);
+            log.info("path:{}", path);
+            log.info("nodeName:{}", nodeName);
             return ZkCache.get(cacheId).createNode(path, nodeName, "") ? "保存成功" : "保存失败";
         } catch (Exception e) {
-            logger.info("Error : {}", e.getMessage(), e);
+            log.info("Error : {}", e.getMessage());
+            e.printStackTrace();
             return "保存失败! Error : " + e.getMessage();
         }
 
@@ -111,13 +115,16 @@ public class ZkController {
 
     @RequestMapping(value = "/deleteNode", produces = "text/html;charset=UTF-8")
     @ResponseBody
-    public String deleteNode(@RequestParam() String path, @RequestParam() String cacheId) {
+    public String deleteNode(@RequestParam() List<String> paths, @RequestParam() String cacheId) {
         try {
-            logger.info("path:{}", path);
-            return ZkCache.get(cacheId).deleteNode(path) ? "删除成功" : "删除失败";
+            log.info("paths:{}", paths);
+            return ZkCache.get(cacheId).deleteNodes(paths) ? "删除成功" : "删除失败";
         } catch (Exception e) {
-            logger.info("Error : {}", e.getMessage(), e);
+            log.info("Error : {}", e.getMessage());
+            e.printStackTrace();
             return "删除失败! Error : " + e.getMessage();
         }
+
     }
+
 }

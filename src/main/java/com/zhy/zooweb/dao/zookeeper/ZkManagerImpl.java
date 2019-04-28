@@ -1,26 +1,27 @@
 package com.zhy.zooweb.dao.zookeeper;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.curator.framework.CuratorFramework;
+import org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.curator.retry.RetryNTimes;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
-import org.apache.zookeeper.ZooDefs.Ids;
 import org.apache.zookeeper.ZooDefs.Perms;
-import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.Stat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+import static org.apache.zookeeper.ZooDefs.Ids.OPEN_ACL_UNSAFE;
 
 public class ZkManagerImpl implements Watcher, ZkManager {
 
-    private ZooKeeper zk;
+    private CuratorFramework zk;
     private final String ROOT = "/";
-    private static final Logger logger = LoggerFactory.getLogger(ZkManagerImpl.class);
+    private static final Log log = LogFactory.getLog(ZkManagerImpl.class);
 
     public static ZkManagerImpl createZk() {
 
@@ -29,9 +30,13 @@ public class ZkManagerImpl implements Watcher, ZkManager {
 
     public ZkManagerImpl connect(String host, int timeout) {
         try {
-            if (null == zk) zk = new ZooKeeper(host, timeout, this);
+            if (null == zk) zk = CuratorFrameworkFactory.newClient(
+                    host,
+                    timeout,timeout,
+                    new RetryNTimes(3, 5000));
+            zk.start();
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
         }
         return this;
     }
@@ -39,26 +44,25 @@ public class ZkManagerImpl implements Watcher, ZkManager {
     public List<String> getChildren(String path) {
 
         try {
-            return zk.getChildren(path == null ? ROOT : path, false);
+            return zk.getChildren().forPath(path == null ? ROOT : path);
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
         }
         return new ArrayList<String>();
     }
 
     public String getData(String path) {
         try {
-            Stat s = zk.exists(path, false);
+            Stat s = zk.checkExists().forPath(path);
             if (s != null) {
-                byte b[] = zk.getData(path, false, s);
+                byte b[] = zk.getData().forPath(path);
                 if (null == b) {
                     return "";
                 }
-                logger.info("data : " + new String(zk.getData(path, false, s)));
-                return new String(zk.getData(path, false, s));
+                return new String(b);
             }
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
         }
         return null;
     }
@@ -69,12 +73,12 @@ public class ZkManagerImpl implements Watcher, ZkManager {
             if (nodePath.length() == 0) {
                 nodePath = ROOT;
             }
-            Stat s = zk.exists(nodePath, false);
+            Stat s = zk.checkExists().forPath(nodePath);
             if (s != null) {
                 nodeMeta.put(Meta.aversion.toString(),
                         String.valueOf(s.getAversion()));
                 nodeMeta.put(Meta.ctime.toString(),
-                        String.valueOf(s.getCtime()));
+                        timeParser(s.getCtime()));
                 nodeMeta.put(Meta.cversion.toString(),
                         String.valueOf(s.getCversion()));
                 nodeMeta.put(Meta.czxid.toString(),
@@ -84,7 +88,7 @@ public class ZkManagerImpl implements Watcher, ZkManager {
                 nodeMeta.put(Meta.ephemeralOwner.toString(),
                         String.valueOf(s.getEphemeralOwner()));
                 nodeMeta.put(Meta.mtime.toString(),
-                        String.valueOf(s.getMtime()));
+                        timeParser(s.getMtime()));
                 nodeMeta.put(Meta.mzxid.toString(),
                         String.valueOf(s.getMzxid()));
                 nodeMeta.put(Meta.numChildren.toString(),
@@ -95,9 +99,17 @@ public class ZkManagerImpl implements Watcher, ZkManager {
                         String.valueOf(s.getVersion()));
             }
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
+            log.error(e);
         }
         return nodeMeta;
+    }
+
+    public static String timeParser(long ts) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss,SSS");
+        GregorianCalendar calendar = new GregorianCalendar(TimeZone.getDefault());
+        calendar.setTimeInMillis(ts);
+        return sdf.format(calendar.getTime());
     }
 
     public List<Map<String, String>> getACLs(String nodePath) {
@@ -106,9 +118,9 @@ public class ZkManagerImpl implements Watcher, ZkManager {
             if (nodePath.length() == 0) {
                 nodePath = ROOT;
             }
-            Stat s = zk.exists(nodePath, false);
+            Stat s = zk.checkExists().forPath(nodePath);
             if (s != null) {
-                List<ACL> aclList = zk.getACL(nodePath, s);
+                List<ACL> aclList = zk.getACL().forPath(nodePath);
                 for (ACL acl : aclList) {
                     Map<String, String> aclMap = new LinkedHashMap<String, String>();
                     aclMap.put(Acl.scheme.toString(), acl.getId().getScheme());
@@ -152,7 +164,8 @@ public class ZkManagerImpl implements Watcher, ZkManager {
                 }
             }
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
+            log.error(e);
         }
         return returnACLs;
     }
@@ -165,42 +178,38 @@ public class ZkManagerImpl implements Watcher, ZkManager {
             } else {
                 p = path + "/" + nodeName;
             }
-            Stat s = zk.exists(p, false);
+            Stat s = zk.checkExists().forPath(p);
             if (s == null) {
-                zk.create(p, data.getBytes(),
-                        Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+                zk.create().withMode(CreateMode.PERSISTENT).withACL(OPEN_ACL_UNSAFE).forPath(p, data.getBytes());
             }
             return true;
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
+            log.error(e);
         }
         return false;
     }
 
-    public boolean deleteNode(String nodePath) {
+    public boolean deleteNodes(List<String> nodePaths) {
         try {
-            Stat s = zk.exists(nodePath, false);
-            if (s != null) {
-                List<String> children = zk.getChildren(nodePath, false);
-                for (String child : children) {
-                    String node = nodePath + "/" + child;
-                    deleteNode(node);
-                }
-                zk.delete(nodePath, -1);
+            for (String nodePath : nodePaths) {
+                zk.delete().deletingChildrenIfNeeded().forPath(nodePath);
             }
             return true;
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
+            log.error(e);
         }
         return false;
     }
 
     public boolean setData(String nodePath, String data) {
         try {
-            zk.setData(nodePath, data.getBytes("utf-8"), -1);
+            zk.setData().forPath(nodePath, data.getBytes("utf-8"));
             return true;
         } catch (Exception e) {
-            logger.error("", e);
+            e.printStackTrace();
+            log.error(e);
         }
         return false;
     }
